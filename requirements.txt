@@ -1,0 +1,32 @@
+# ============================================================
+# Gestor de Oficina Pro - Dependencias
+# ============================================================
+# Instalar con:  pip install -r requirements.txt
+#
+# La aplicación usa únicamente la librería estándar de Python,
+# salvo la notificación de escritorio nativa en Windows.
+# ============================================================
+
+# --- Librerías de la librería estándar (incluidas en Python 3.8+) ---
+# tkinter    → interfaz gráfica (incluida en Python estándar)
+# os         → operaciones del sistema de archivos
+# shutil     → copia / movimiento de archivos
+# platform   → detección del SO
+# pathlib    → rutas orientadas a objetos
+# threading  → hilos en segundo plano
+# json       → persistencia de configuración
+# datetime   → marcas de tiempo
+# hashlib    → hash MD5 para detección de cambios
+# time       → esperas en monitores
+# zipfile    → compresión ZIP
+# tarfile    → compresión TAR/GZ/BZ2
+# argparse   → argumentos de línea de comandos
+# sys        → acceso al intérprete
+
+# --- Dependencias opcionales (notificaciones de escritorio) ---
+# Windows: notificaciones toast nativas
+win10toast>=0.9; sys_platform == "win32"
+
+# Linux / macOS: notify-send (libnotify) se invoca vía subprocess,
+# sin paquete Python adicional. En distribuciones Debian/Ubuntu:
+#   sudo apt install libnotify-bin

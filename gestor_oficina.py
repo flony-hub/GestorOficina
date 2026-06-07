@@ -1,8 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue Oct 28 22:08:33 2025
+Gestor de Oficina Pro
+====================
+Aplicación de gestión de archivos para carpetas de oficina locales o en red.
+Compatible con Linux, macOS y Windows.
 
-@author: auten
+Uso:
+    python gestor_oficina.py [--ruta /ruta/oficina] [--backup /ruta/backup]
+
+@author: flony
 """
 
 import tkinter as tk
@@ -18,6 +24,8 @@ import hashlib
 import time
 import zipfile
 import tarfile
+import argparse
+import sys
 
 # Para notificaciones del sistema
 try:
@@ -30,18 +38,22 @@ except ImportError:
     pass
 
 class GestorOficina:
-    def __init__(self, root):
+    def __init__(self, root, ruta_oficina_arg=None, ruta_backup_arg=None):
         self.root = root
         self.root.title("Gestor de Oficina Pro - v1.0")
         self.root.geometry("1100x700")
         
-        # Detectar sistema operativo y configurar rutas
+        # Detectar sistema operativo
         self.sistema = platform.system()
-        self.setup_paths()
         
         # Archivo de configuración para sync offline
         self.config_file = os.path.join(os.path.expanduser("~"), ".gestor_oficina.json")
+        
+        # Cargar configuración existente primero
         self.load_config()
+        
+        # Configurar rutas: prioridad → argumento CLI > config guardada > asistente
+        self.setup_paths(ruta_oficina_arg, ruta_backup_arg)
         
         # Variables de control
         self.sync_active = tk.BooleanVar(value=False)
@@ -62,56 +74,145 @@ class GestorOficina:
         # Iniciar monitor de notificaciones
         self.start_notification_monitor()
     
-    def setup_paths(self):
-        """Configura las rutas según el sistema operativo"""
-        if self.sistema == "Linux":
-            self.ruta_oficina = "/home/flony/oficina"
-            self.ruta_backup = "/home/flony/oficina_backup"
-            self.ruta_sync_cache = "/home/flony/.oficina_sync"
-        else:  # Windows
-            # La unidad Z: mapeada
-            self.ruta_oficina = "Z:\\"
-            # Alternativa si no está mapeada
-            if not os.path.exists(self.ruta_oficina):
-                self.ruta_oficina = "\\\\192.168.1.28\\oficina"
-            self.ruta_backup = "C:\\oficina_backup"
-            self.ruta_sync_cache = os.path.join(os.path.expanduser("~"), ".oficina_sync")
+    def _default_oficina(self):
+        """Retorna la ruta por defecto de la carpeta de oficina según el SO"""
+        home = os.path.expanduser("~")
+        return os.path.join(home, "oficina")
+
+    def _default_backup(self):
+        """Retorna la ruta por defecto de backup según el SO"""
+        home = os.path.expanduser("~")
+        return os.path.join(home, "oficina_backup")
+
+    def _default_cache(self):
+        """Retorna la ruta por defecto del cache de sincronización"""
+        home = os.path.expanduser("~")
+        return os.path.join(home, ".oficina_sync")
+
+    def setup_paths(self, ruta_oficina_arg=None, ruta_backup_arg=None):
+        """Configura las rutas de forma genérica y configurable.
         
+        Orden de prioridad:
+          1. Argumentos pasados por línea de comandos
+          2. Rutas guardadas en el archivo de configuración JSON
+          3. Asistente de primera ejecución (diálogo gráfico)
+          4. Valores por defecto: ~/oficina  y  ~/oficina_backup
+        """
+        # 1. Intentar obtener rutas desde argumentos CLI
+        if ruta_oficina_arg:
+            self.ruta_oficina = ruta_oficina_arg
+        elif self.config.get('ruta_oficina'):
+            self.ruta_oficina = self.config['ruta_oficina']
+        else:
+            # 3. Asistente de primera ejecución
+            self.ruta_oficina = self._ask_first_run_config()
+
+        if ruta_backup_arg:
+            self.ruta_backup = ruta_backup_arg
+        elif self.config.get('ruta_backup'):
+            self.ruta_backup = self.config['ruta_backup']
+        else:
+            self.ruta_backup = self._default_backup()
+
+        # Cache siempre en el home del usuario
+        self.ruta_sync_cache = self.config.get('ruta_sync_cache', self._default_cache())
+
+        # Persistir las rutas elegidas
+        self.config['ruta_oficina'] = self.ruta_oficina
+        self.config['ruta_backup'] = self.ruta_backup
+        self.config['ruta_sync_cache'] = self.ruta_sync_cache
+        self._save_config_data()
+
         # Crear carpetas necesarias
         for ruta in [self.ruta_backup, self.ruta_sync_cache]:
             if not os.path.exists(ruta):
                 try:
-                    os.makedirs(ruta)
+                    os.makedirs(ruta, exist_ok=True)
                 except Exception as e:
                     print(f"Error creando {ruta}: {e}")
+
+    def _ask_first_run_config(self):
+        """Muestra un diálogo para configurar la carpeta de oficina en la primera ejecución."""
+        default = self._default_oficina()
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Configuración Inicial - Gestor de Oficina")
+        dialog.geometry("520x200")
+        dialog.resizable(False, False)
+        dialog.grab_set()  # Modal
+
+        tk.Label(dialog,
+                 text="¡Bienvenido a Gestor de Oficina Pro!\n"
+                      "Por favor, elige la carpeta principal donde se guardarán los archivos de oficina.",
+                 wraplength=480, justify='left', pady=10).pack(padx=20)
+
+        frame = tk.Frame(dialog)
+        frame.pack(fill=tk.X, padx=20, pady=5)
+
+        tk.Label(frame, text="Carpeta de oficina:").pack(side=tk.LEFT)
+        entry_var = tk.StringVar(value=default)
+        entry = tk.Entry(frame, textvariable=entry_var, width=40)
+        entry.pack(side=tk.LEFT, padx=5)
+
+        def browse():
+            chosen = filedialog.askdirectory(initialdir=os.path.expanduser("~"),
+                                             title="Selecciona la carpeta de oficina")
+            if chosen:
+                entry_var.set(chosen)
+
+        tk.Button(frame, text="Examinar...", command=browse).pack(side=tk.LEFT)
+
+        result = [default]
+
+        def confirm():
+            path = entry_var.get().strip()
+            if not path:
+                messagebox.showwarning("Advertencia", "Debes especificar una ruta.", parent=dialog)
+                return
+            try:
+                os.makedirs(path, exist_ok=True)
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo crear la carpeta:\n{e}", parent=dialog)
+                return
+            result[0] = path
+            dialog.destroy()
+
+        tk.Button(dialog, text="Aceptar", command=confirm, width=12).pack(pady=10)
+        self.root.wait_window(dialog)
+        return result[0]
     
     def load_config(self):
-        """Carga la configuración guardada"""
+        """Carga la configuración guardada (rutas, hashes, archivos vigilados)"""
+        self.config = {}
         self.file_hashes = {}
         self.last_sync = {}
         self.watched_files = set()
-        
+
         if os.path.exists(self.config_file):
             try:
-                with open(self.config_file, 'r') as f:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
+                    self.config = data  # guardar todo el dict
                     self.file_hashes = data.get('hashes', {})
                     self.last_sync = data.get('last_sync', {})
                     self.watched_files = set(data.get('watched_files', []))
-            except:
+            except Exception:
                 pass
-    
-    def save_config(self):
-        """Guarda la configuración"""
+
+    def _save_config_data(self):
+        """Persiste el dict self.config completo al disco."""
         try:
-            with open(self.config_file, 'w') as f:
-                json.dump({
-                    'hashes': self.file_hashes,
-                    'last_sync': self.last_sync,
-                    'watched_files': list(self.watched_files)
-                }, f)
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"Error guardando config: {e}")
+
+    def save_config(self):
+        """Guarda hashes y archivos vigilados en la configuración"""
+        self.config['hashes'] = self.file_hashes
+        self.config['last_sync'] = self.last_sync
+        self.config['watched_files'] = list(self.watched_files)
+        self._save_config_data()
     
     def create_widgets(self):
         """Crea la interfaz gráfica mejorada"""
@@ -1596,10 +1697,45 @@ Tipo: {'Carpeta' if os.path.isdir(ruta) else 'Archivo'}"""
         if int(self.sync_log.index('end-1c').split('.')[0]) > 1000:
             self.sync_log.delete('1.0', '100.0')
 
+def parse_args():
+    """Parsea los argumentos de línea de comandos."""
+    parser = argparse.ArgumentParser(
+        description="Gestor de Oficina Pro - Gestor de archivos para carpetas de oficina"
+    )
+    parser.add_argument(
+        '--ruta', '-r',
+        metavar='RUTA_OFICINA',
+        help='Ruta de la carpeta de oficina (ej: /home/usuario/oficina o Z:\\)',
+        default=None
+    )
+    parser.add_argument(
+        '--backup', '-b',
+        metavar='RUTA_BACKUP',
+        help='Ruta de la carpeta de backup (ej: /home/usuario/oficina_backup)',
+        default=None
+    )
+    parser.add_argument(
+        '--reset-config',
+        action='store_true',
+        help='Elimina la configuración guardada y muestra el asistente de primera ejecución'
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
+    # Opción para resetear la configuración
+    if args.reset_config:
+        config_file = os.path.join(os.path.expanduser("~"), ".gestor_oficina.json")
+        if os.path.exists(config_file):
+            os.remove(config_file)
+            print("Configuración eliminada. Se mostrará el asistente de primera ejecución.")
+
     root = tk.Tk()
-    app = GestorOficina(root)
+    app = GestorOficina(root, ruta_oficina_arg=args.ruta, ruta_backup_arg=args.backup)
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
